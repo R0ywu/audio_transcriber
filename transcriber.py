@@ -99,7 +99,14 @@ def download_youtube_audio(url: str, work_dir: Path) -> tuple[Path, str]:
         print(f"[ERROR] 無法取得影片資訊：{exc.stderr}", file=sys.stderr)
         sys.exit(1)
 
-    meta: dict[str, Any] = json.loads(meta_result.stdout)
+    try:
+        meta: dict[str, Any] = json.loads(meta_result.stdout)
+    except json.JSONDecodeError as exc:
+        print(
+            f"[ERROR] 無法解析影片資訊（yt-dlp 回傳非預期內容）：{exc}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
     title = meta.get("title", "youtube_audio")
     safe_title = sanitize_filename(title)
 
@@ -131,14 +138,15 @@ def format_timestamp(seconds: float, srt: bool = False) -> str:
     """將秒數轉換成 HH:MM:SS,mmm (SRT) 或 HH:MM:SS (Markdown) 格式。"""
     if seconds < 0:
         seconds = 0
-    hours = int(seconds // 3600)
-    minutes = int((seconds % 3600) // 60)
-    secs = seconds % 60
+    # Round to total milliseconds first, then carry via divmod so a
+    # value like 59.9996s correctly rolls over instead of yielding ",1000".
+    total_ms = int(round(seconds * 1000))
+    hours, total_ms = divmod(total_ms, 3_600_000)
+    minutes, total_ms = divmod(total_ms, 60_000)
+    secs, millis = divmod(total_ms, 1000)
     if srt:
-        whole = int(secs)
-        millis = int(round((secs - whole) * 1000))
-        return f"{hours:02d}:{minutes:02d}:{whole:02d},{millis:03d}"
-    return f"{hours:02d}:{minutes:02d}:{int(secs):02d}"
+        return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
 
 
 def transcribe(
