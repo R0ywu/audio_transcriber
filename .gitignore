@@ -1,0 +1,23 @@
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.env
+
+# 輸出與暫存
+output/
+*.mp3
+*.wav
+*.m4a
+*.srt
+*.vtt
+!example.srt
+
+# IDE
+.vscode/
+.idea/
+.DS_Store
+
+# Claude Code local settings
+.claude/settings.local.json
