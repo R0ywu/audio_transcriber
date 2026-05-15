@@ -63,3 +63,9 @@ python transcriber.py "https://youtu.be/XXXX" --keep-audio
 - 首次使用某個模型時會自動從 Hugging Face 下載權重（`mlx-community/whisper-*`），之後快取重用
 - `--language zh` 透過 initial prompt 引導 Whisper 輸出繁體字，避免簡體
 - `large-v3-turbo` 為預設，速度／品質平衡最佳；追求最高品質可用 `large-v3`
+
+## 授權
+
+本專案以 [MIT License](LICENSE) 釋出，Copyright (c) 2026 Roy Wu。
+
+> 注意：透過本工具下載 YouTube 內容仍須遵守 YouTube 服務條款，請自行確認使用情境合法。
