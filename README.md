@@ -1,12 +1,13 @@
-# YouTube Transcriber
+# YouTube / SoundOn Transcriber
 
-YouTube／本地音訊逐字稿生成器，使用 `yt-dlp` 下載音訊、`mlx-whisper` 轉錄，針對 Apple Silicon 最佳化。輸出 `.txt`／`.srt`／`.md` 三種格式，方便後續丟給 LLM 做摘要整理。
+YouTube／SoundOn Podcast／本地音訊逐字稿生成器，使用 `yt-dlp`／SoundOn client API 下載音訊、`mlx-whisper` 轉錄，針對 Apple Silicon 最佳化。輸出 `.txt`／`.srt`／`.md` 三種格式，方便後續丟給 LLM 做摘要整理。
 
 ## 特性
 
 - **Apple Silicon 最佳化**：使用 Apple MLX 框架的 Whisper 實作，速度與記憶體優於原版 openai-whisper
-- **兩種輸入**：YouTube URL 或本地音訊／影片檔案
+- **三種輸入**：YouTube URL、SoundOn player URL，或本地音訊／影片檔案
 - **三種輸出**：`.txt`（純文字無時間戳）、`.srt`（字幕檔）、`.md`（帶時間戳，人類閱讀）
+- **SoundOn 直連**：解析 `https://player.soundon.fm/p/<podcast_id>/episodes/<episode_id>`，透過 client API 拿真實 mp3 直接下載（不需 yt-dlp）
 - **繁體中文友善**：`--language zh` 會自動加入 initial prompt 強制輸出繁體字
 - **自動語言偵測**：預設讓 Whisper 自行判斷語言
 - **暫存自動清理**：下載的音訊預設用暫存目錄，結束後自動刪除（可用 `--keep-audio` 保留）
@@ -30,6 +31,9 @@ pip install -r requirements.txt
 # YouTube 影片
 python transcriber.py "https://www.youtube.com/watch?v=XXXX"
 
+# SoundOn podcast（例：股癌 EP663）
+python transcriber.py "https://player.soundon.fm/p/954689a5-3096-43a4-a80b-7810b219cef3/episodes/a3324cb1-b7be-4483-a739-d3ebfc534277" --language zh
+
 # 本地音訊，指定英文模型
 python transcriber.py ./local_audio.mp3 --language en --model large-v3
 
@@ -44,7 +48,7 @@ python transcriber.py "https://youtu.be/XXXX" --keep-audio
 
 | 參數 | 說明 | 預設 |
 |------|------|------|
-| `source` | YouTube URL 或本地音訊／影片檔路徑（必填） | — |
+| `source` | YouTube URL、SoundOn player URL，或本地音訊／影片檔路徑（必填） | — |
 | `--model`, `-m` | Whisper 模型：`tiny` / `base` / `small` / `medium` / `large-v2` / `large-v3` / `large-v3-turbo` | `large-v3-turbo` |
 | `--language`, `-l` | 語言代碼：`zh`（繁中，自動加繁體 prompt）、`en`、`ja`、`auto`（自動偵測） | `auto` |
 | `--output-dir`, `-o` | 輸出目錄 | `./output` |
@@ -63,6 +67,7 @@ python transcriber.py "https://youtu.be/XXXX" --keep-audio
 - 首次使用某個模型時會自動從 Hugging Face 下載權重（`mlx-community/whisper-*`），之後快取重用
 - `--language zh` 透過 initial prompt 引導 Whisper 輸出繁體字，避免簡體
 - `large-v3-turbo` 為預設，速度／品質平衡最佳；追求最高品質可用 `large-v3`
+- SoundOn 支援使用 player bundle 內嵌的公開 client token；若未來 SoundOn 更換 token 導致 401，重新從 `https://player.soundon.fm/bundle.<hash>.js` 抓出新 token 替換 `transcriber.py` 中的 `SOUNDON_API_TOKEN` 即可
 
 ## 授權
 
