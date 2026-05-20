@@ -133,13 +133,23 @@ def fetch_soundon_episode(podcast_id: str, episode_id: str) -> dict[str, Any]:
     )
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
-            payload = json.loads(response.read().decode("utf-8"))
+            raw_body = response.read()
     except HTTPError as exc:
         raise RuntimeError(
             f"SoundOn API 回傳錯誤 {exc.code}：{exc.reason}（URL：{api_url}）"
         ) from exc
     except URLError as exc:
         raise RuntimeError(f"無法連線 SoundOn API：{exc.reason}") from exc
+
+    # API 偶爾可能回 HTML 錯誤頁或非 UTF-8 內容；
+    # 抽離 read 與 parse 以便獨立提供友善訊息（含原始片段方便除錯）
+    try:
+        payload = json.loads(raw_body.decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        snippet = raw_body[:200]
+        raise RuntimeError(
+            f"SoundOn API 回應非有效 JSON：{exc}（前 200 byte：{snippet!r}）"
+        ) from exc
 
     if payload.get("result") != "success":
         raise RuntimeError(f"SoundOn API 回應非 success：{payload}")
