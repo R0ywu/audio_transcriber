@@ -1,4 +1,4 @@
-# YouTube / SoundOn Transcriber
+# Audio Transcriber
 
 YouTube／SoundOn Podcast／本地音訊逐字稿生成器，使用 `yt-dlp`／SoundOn client API 下載音訊、`mlx-whisper` 轉錄，針對 Apple Silicon 最佳化。輸出 `.txt`／`.srt`／`.md` 三種格式，方便後續丟給 LLM 做摘要整理。
 

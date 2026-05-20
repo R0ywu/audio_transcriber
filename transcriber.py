@@ -383,7 +383,7 @@ def process(
         if keep_audio:
             audio_dir = output_dir
         else:
-            tmp_dir_obj = tempfile.TemporaryDirectory(prefix="yt_transcriber_")
+            tmp_dir_obj = tempfile.TemporaryDirectory(prefix="audio_transcriber_")
             audio_dir = Path(tmp_dir_obj.name)
 
         if is_soundon_url(source):
