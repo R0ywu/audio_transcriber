@@ -147,9 +147,16 @@ def fetch_soundon_episode(podcast_id: str, episode_id: str) -> dict[str, Any]:
     # 回應結構：{result, status, data: {id, data: {title, audioUrl, ...}}}
     inner = payload.get("data", {})
     episode_data = inner.get("data", {})
-    if not episode_data.get("audioUrl"):
+    audio_url = episode_data.get("audioUrl")
+    if not audio_url:
         raise RuntimeError(
             f"API 回應中找不到 audioUrl，資料可能異常：{episode_data}"
+        )
+    # 驗證 scheme，避免 SoundOn 端遭滲透 / MITM 後回傳 file:// 等
+    # 非預期 scheme 造成本地檔被當成「音訊」讀回來
+    if not audio_url.lower().startswith(("http://", "https://")):
+        raise RuntimeError(
+            f"audioUrl scheme 不合法（必須是 http/https）：{audio_url}"
         )
     return episode_data
 
