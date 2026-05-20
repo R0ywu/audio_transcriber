@@ -62,8 +62,12 @@ SOUNDON_API_TOKEN = "KilpEMLQeNzxmNBL55u5"
 
 # 解析 SoundOn player URL 取出 podcast_id 與 episode_id
 # 範例：https://player.soundon.fm/p/<podcast_id>/episodes/<episode_id>
+# 錨定到字串開頭並強制 http(s) scheme + player.soundon.fm 主機，
+# 避免攻擊者構造 https://evil.com/?x=https://player.soundon.fm/p/... 被誤認。
 SOUNDON_URL_RE = re.compile(
-    r"player\.soundon\.fm/p/(?P<pid>[0-9a-f-]{36})/episodes/(?P<eid>[0-9a-f-]{36})",
+    r"^https?://(?:www\.)?player\.soundon\.fm"
+    r"/p/(?P<pid>[0-9a-f-]{36})/episodes/(?P<eid>[0-9a-f-]{36})"
+    r"(?:[/?#]|$)",
     re.IGNORECASE,
 )
 
