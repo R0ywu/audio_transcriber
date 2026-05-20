@@ -1,10 +1,16 @@
-"""YouTube / 本地音訊逐字稿生成器 (Mac Apple Silicon 最佳化).
+"""YouTube / SoundOn / 本地音訊逐字稿生成器 (Mac Apple Silicon 最佳化).
 
-使用 yt-dlp 下載 YouTube 音訊，再透過 mlx-whisper 轉換為逐字稿。
+支援三種輸入：
+1. YouTube URL → 使用 yt-dlp 下載
+2. SoundOn player URL → 透過 SoundOn client API 取得 mp3 直接下載
+3. 本地音訊 / 影片檔
+
+所有來源最終都透過 mlx-whisper 轉錄為逐字稿，
 輸出 .txt / .srt / .md 三種格式，方便後續丟給 Claude 做摘要整理。
 
 Usage:
     python transcriber.py "https://www.youtube.com/watch?v=XXX"
+    python transcriber.py "https://player.soundon.fm/p/<pid>/episodes/<eid>"
     python transcriber.py ./local_audio.mp3 --language en --model large-v3
     python transcriber.py <url> --output-dir ./transcripts --keep-audio
 """
@@ -18,8 +24,10 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import urllib.request
 from pathlib import Path
 from typing import Any
+from urllib.error import HTTPError, URLError
 
 # 註：mlx-whisper 是 Apple 官方 MLX 框架的 Whisper 實作，
 # 在 Apple Silicon 上速度與記憶體表現優於原版 openai-whisper。
@@ -44,6 +52,19 @@ MLX_MODEL_REPOS: dict[str, str] = {
 ZH_TW_INITIAL_PROMPT = (
     "以下是普通話的句子，請使用繁體中文輸出，"
     "包含標點符號，例如：你好、謝謝、台灣、軟體、資訊、網路。"
+)
+
+# SoundOn 的 client API 與 player 內嵌在 bundle 裡的公開 token
+# 來源：https://player.soundon.fm/bundle.<hash>.js 中的 config 物件
+# 若未來 SoundOn 換 token 導致 401，重新從 bundle 抓即可
+SOUNDON_API_BASE = "https://api.soundon.fm/v2/client"
+SOUNDON_API_TOKEN = "KilpEMLQeNzxmNBL55u5"
+
+# 解析 SoundOn player URL 取出 podcast_id 與 episode_id
+# 範例：https://player.soundon.fm/p/<podcast_id>/episodes/<episode_id>
+SOUNDON_URL_RE = re.compile(
+    r"player\.soundon\.fm/p/(?P<pid>[0-9a-f-]{36})/episodes/(?P<eid>[0-9a-f-]{36})",
+    re.IGNORECASE,
 )
 
 
@@ -73,6 +94,117 @@ def check_ffmpeg_available() -> None:
 def is_url(source: str) -> bool:
     """判斷輸入是 URL 還是本地檔案路徑。"""
     return source.startswith(("http://", "https://", "www."))
+
+
+def is_soundon_url(source: str) -> bool:
+    """判斷是否為 SoundOn player URL。"""
+    return bool(SOUNDON_URL_RE.search(source))
+
+
+def parse_soundon_url(url: str) -> tuple[str, str]:
+    """從 SoundOn player URL 取出 (podcast_id, episode_id)。"""
+    match = SOUNDON_URL_RE.search(url)
+    if not match:
+        raise ValueError(
+            f"無法解析 SoundOn URL：{url}\n"
+            "預期格式：https://player.soundon.fm/p/<podcast_id>/episodes/<episode_id>"
+        )
+    return match.group("pid"), match.group("eid")
+
+
+def fetch_soundon_episode(podcast_id: str, episode_id: str) -> dict[str, Any]:
+    """呼叫 SoundOn client API 取得 episode metadata。
+
+    回傳 response.data.data 物件（含 title、audioUrl、duration 等欄位）。
+    """
+    api_url = (
+        f"{SOUNDON_API_BASE}/podcasts/{podcast_id}/episodes/{episode_id}"
+    )
+    request = urllib.request.Request(
+        api_url,
+        headers={
+            "api-token": SOUNDON_API_TOKEN,
+            "User-Agent": "Mozilla/5.0 (soundon-transcriber)",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except HTTPError as exc:
+        raise RuntimeError(
+            f"SoundOn API 回傳錯誤 {exc.code}：{exc.reason}（URL：{api_url}）"
+        ) from exc
+    except URLError as exc:
+        raise RuntimeError(f"無法連線 SoundOn API：{exc.reason}") from exc
+
+    if payload.get("result") != "success":
+        raise RuntimeError(f"SoundOn API 回應非 success：{payload}")
+
+    # 回應結構：{result, status, data: {id, data: {title, audioUrl, ...}}}
+    inner = payload.get("data", {})
+    episode_data = inner.get("data", {})
+    if not episode_data.get("audioUrl"):
+        raise RuntimeError(
+            f"API 回應中找不到 audioUrl，資料可能異常：{episode_data}"
+        )
+    return episode_data
+
+
+def download_soundon_audio(url: str, work_dir: Path) -> tuple[Path, str]:
+    """下載 SoundOn podcast 音訊，回傳 (音訊檔路徑, episode 標題)。
+
+    流程：
+    1. 解析 player URL 取 podcast_id / episode_id
+    2. 呼叫 client API 取 audioUrl 與 title
+    3. 串流下載 mp3 到 work_dir
+    """
+    print(f"[1/3] 解析 SoundOn URL：{url}")
+    podcast_id, episode_id = parse_soundon_url(url)
+
+    episode = fetch_soundon_episode(podcast_id, episode_id)
+    title = episode.get("title") or f"soundon_{episode_id[:8]}"
+    audio_url = episode["audioUrl"]
+    duration_sec = episode.get("duration")
+    if duration_sec:
+        mins, secs = divmod(int(duration_sec), 60)
+        print(f"      標題：{title}（時長 {mins} 分 {secs} 秒）")
+    else:
+        print(f"      標題：{title}")
+
+    safe_title = sanitize_filename(title)
+    audio_path = work_dir / f"{safe_title}.mp3"
+
+    print(f"      下載音訊：{audio_url}")
+    request = urllib.request.Request(
+        audio_url,
+        headers={"User-Agent": "Mozilla/5.0 (soundon-transcriber)"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:
+            total = response.headers.get("Content-Length")
+            total_bytes = int(total) if total and total.isdigit() else None
+            downloaded = 0
+            chunk_size = 1 << 16  # 64KB
+            with audio_path.open("wb") as fh:
+                while True:
+                    chunk = response.read(chunk_size)
+                    if not chunk:
+                        break
+                    fh.write(chunk)
+                    downloaded += len(chunk)
+                    if total_bytes:
+                        pct = downloaded * 100 / total_bytes
+                        print(
+                            f"      已下載 {downloaded / 1_048_576:.1f} MB "
+                            f"/ {total_bytes / 1_048_576:.1f} MB ({pct:.1f}%)",
+                            end="\r",
+                            flush=True,
+                        )
+            print()  # 換行收尾
+    except (HTTPError, URLError) as exc:
+        raise RuntimeError(f"下載 SoundOn 音訊失敗：{exc}") from exc
+
+    return audio_path, title
 
 
 def sanitize_filename(name: str) -> str:
@@ -248,13 +380,17 @@ def process(
     tmp_dir_obj: tempfile.TemporaryDirectory[str] | None = None
 
     if is_url(source):
-        check_yt_dlp_available()
         if keep_audio:
             audio_dir = output_dir
         else:
             tmp_dir_obj = tempfile.TemporaryDirectory(prefix="yt_transcriber_")
             audio_dir = Path(tmp_dir_obj.name)
-        audio_path, title = download_youtube_audio(source, audio_dir)
+
+        if is_soundon_url(source):
+            audio_path, title = download_soundon_audio(source, audio_dir)
+        else:
+            check_yt_dlp_available()
+            audio_path, title = download_youtube_audio(source, audio_dir)
     else:
         audio_path = Path(source).expanduser().resolve()
         if not audio_path.exists():
@@ -291,19 +427,21 @@ def build_parser() -> argparse.ArgumentParser:
     """建立 CLI 參數解析器。"""
     parser = argparse.ArgumentParser(
         description=(
-            "YouTube / 本地音訊逐字稿生成器，使用 mlx-whisper 在 Apple Silicon 上跑。"
+            "YouTube / SoundOn / 本地音訊逐字稿生成器，"
+            "使用 mlx-whisper 在 Apple Silicon 上跑。"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "範例：\n"
             "  python transcriber.py 'https://youtu.be/XXX'\n"
+            "  python transcriber.py 'https://player.soundon.fm/p/<pid>/episodes/<eid>'\n"
             "  python transcriber.py audio.mp3 --language en --model large-v3\n"
             "  python transcriber.py <url> --language zh -o ./transcripts\n"
         ),
     )
     parser.add_argument(
         "source",
-        help="YouTube URL 或本地音訊 / 影片檔案路徑",
+        help="YouTube URL、SoundOn player URL，或本地音訊 / 影片檔案路徑",
     )
     parser.add_argument(
         "--model",
